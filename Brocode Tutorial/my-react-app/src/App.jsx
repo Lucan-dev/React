@@ -1,8 +1,4 @@
-import Header from './Header.jsx'
-import Footer from './Footer.jsx'
-import Food from './Food.jsx'
-import Card from './Card.jsx'
-import Button from './Button/Button.jsx'
+import Student from './Student'
 
 function App() {
 
@@ -10,15 +6,11 @@ function App() {
     // Enclose app elements in a fragment tag
     // React only allows you to return a single component
     <>
-      <Header></Header>
-      <Button></Button>
-      <Card></Card>
-      <Card />
-      <Card />
-      <Card />
-      <Food></Food>
-      <Food /> {/* Shortened Syntax */}
-      <Footer></Footer>
+      {/*Use curly braces to store value that isn't a string*/}
+      <Student name="Spongebob" age={30} isStudent={true}/>
+      <Student name="Patrick" age={41} isStudent={true}/>
+      <Student name="Squidward" age={100} isStudent={true}/>
+      <Student />
     </>
   );
 }
