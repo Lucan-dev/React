@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hands of Fate</title>
+    <link rel="icon" href="Assets/icon.png" type="image/x-icon">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <!-- Start Screen -->
+    <div id="start-screen" class="start-screen">
+        <div class="banner-container">
+            <img id="banner-image" src="Assets/Banner.png" alt="Gesture Blackjack Banner" class="banner-image">
+        </div>
+        
+        <div class="start-content">
+            <p class="subtitle">Play Blackjack with your hands!</p>
+            
+            <div class="instructions">
+                <h3>How to Play:</h3>
+                <div class="instruction-grid">
+                    <div class="instruction-item">
+                        <div class="gesture-icon">✋</div>
+                        <h4>Open Hand = STAND</h4>
+                        <p>Keep your current cards</p>
+                    </div>
+                    <div class="instruction-item">
+                        <div class="gesture-icon">✊</div>
+                        <h4>Closed Fist = HIT</h4>
+                        <p>Take another card</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="start-buttons">
+                <button type="button" onclick="startGame()" class="start-btn primary">
+                    🎮 Start Game
+                </button>
+                <button type="button" onclick="init()" class="start-btn secondary">
+                    📹 Setup Camera
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Screen -->
+    <div id="game-screen" class="game-screen hidden">
+        <div class="game-header">
+            <h1>🎰 Gesture Controlled Blackjack</h1>
+            <div class="header-buttons">
+                <button type="button" onclick="toggleMusic()" class="back-btn">Toggle Music</button>
+                <button type="button" onclick="showStartScreen()" class="back-btn">Menu</button>
+            </div>
+        </div>
+
+        <div class="game-container">
+        <div class="game-board">
+            <div class="hand">
+                <div class="hand-content">
+                    <div class="character-section">
+                        <img id="dealer-image" src="Assets/Dealer.png" alt="Dealer Character" class="character-image" id="dealer-image" onclick="uploadCharacterImage('dealer')">
+                        <!-- <div class="character-label">Dealer</div> -->
+                    </div>
+                    <div class="cards-section">
+                        <h3>Dealer's Hand</h3>
+                        <div id="dealer-cards"></div>
+                        <div class="score">Score: <span id="dealer-score">0</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="hand">
+                <div class="hand-content">
+                    <div class="character-section">
+                        <img id="player-image" src="Assets/Player.png" alt="Player Character" class="character-image" id="player-image" onclick="uploadCharacterImage('player')">
+                        <!-- <div class="character-label">You</div> -->
+                    </div>
+                    <div class="cards-section">
+                        <h3>Your Hand</h3>
+                        <div id="player-cards"></div>
+                        <div class="score">Score: <span id="player-score">0</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="game-status" id="game-status">Press "New Game" to start!</div>
+        </div>
+
+        <div class="controls">
+            <div class="webcam-section">
+                <button type="button" onclick="init()">Start Camera</button>
+                <button type="button" onclick="newGame()">New Game</button>
+                <div id="webcam-container"></div>
+            </div>
+
+            <div class="gesture-status" id="gesture-status">
+                Current Gesture: <span id="current-gesture">None</span>
+            </div>
+
+            <div class="move-controls">
+                <button type="button" id="submit-move" onclick="submitMove()" disabled>
+                    Submit Move: <span id="detected-move">None</span>
+                </button>
+            </div>
+
+            <div class="prediction-display" id="label-container"></div>
+        </div>
+    </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <script type="text/javascript">
+        // UPDATE THIS URL with your trained model
+        const URL = "https://teachablemachine.withgoogle.com/models/Pb31B3cbq/";
+
+        let model, webcam, labelContainer, maxPredictions;
+        let gameState = 'waiting'; // 'waiting', 'playing', 'dealer-turn', 'game-over'
+        let playerCards = [];
+        let dealerCards = [];
+        let deck = [];
+        let lastGesture = '';
+        let gestureConfidence = 0;
+        let gestureStable = false;
+        let currentDetectedMove = '';
+        let submitButton;
+
+        // Card values and suits
+        const suits = ['♠', '♥', '♦', '♣'];
+        const values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+
+        // Initialize deck
+        function createDeck() {
+            deck = [];
+            for (let suit of suits) {
+                for (let value of values) {
+                    deck.push({ suit, value });
+                }
+            }
+            shuffleDeck();
+        }
+
+        function shuffleDeck() {
+            for (let i = deck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [deck[i], deck[j]] = [deck[j], deck[i]];
+            }
+        }
+
+        function getCardValue(card) {
+            if (card.value === 'A') return 11;
+            if (['J', 'Q', 'K'].includes(card.value)) return 10;
+            return parseInt(card.value);
+        }
+
+        function calculateScore(cards) {
+            let score = 0;
+            let aces = 0;
+            
+            for (let card of cards) {
+                if (card.value === 'A') {
+                    aces++;
+                    score += 11;
+                } else if (['J', 'Q', 'K'].includes(card.value)) {
+                    score += 10;
+                } else {
+                    score += parseInt(card.value);
+                }
+            }
+            
+            // Adjust for aces
+            while (score > 21 && aces > 0) {
+                score -= 10;
+                aces--;
+            }
+            
+            return score;
+        }
+
+        function dealCard() {
+            return deck.pop();
+        }
+
+        function displayCard(card, isHidden = false) {
+            if (isHidden) {
+                return `<div class="card">🂠</div>`;
+            }
+            const color = (card.suit === '♥' || card.suit === '♦') ? 'red' : 'black';
+            return `<div class="card ${color}">${card.value}${card.suit}</div>`;
+        }
+
+        function updateDisplay() {
+            const dealerCardsDiv = document.getElementById('dealer-cards');
+            const playerCardsDiv = document.getElementById('player-cards');
+            const dealerScoreSpan = document.getElementById('dealer-score');
+            const playerScoreSpan = document.getElementById('player-score');
+
+            // Player cards (always visible)
+            playerCardsDiv.innerHTML = playerCards.map(card => displayCard(card)).join('');
+            playerScoreSpan.textContent = calculateScore(playerCards);
+
+            // Dealer cards (first card hidden during player turn)
+            if (gameState === 'playing') {
+                dealerCardsDiv.innerHTML = displayCard(dealerCards[0], true) + 
+                    dealerCards.slice(1).map(card => displayCard(card)).join('');
+                dealerScoreSpan.textContent = '?';
+            } else {
+                dealerCardsDiv.innerHTML = dealerCards.map(card => displayCard(card)).join('');
+                dealerScoreSpan.textContent = calculateScore(dealerCards);
+            }
+        }
+
+        function newGame() {
+            createDeck();
+            playerCards = [];
+            dealerCards = [];
+            gameState = 'playing';
+            currentDetectedMove = '';
+            
+            // Deal initial cards
+            playerCards.push(dealCard());
+            dealerCards.push(dealCard());
+            playerCards.push(dealCard());
+            dealerCards.push(dealCard());
+            
+            updateDisplay();
+            updateGameStatus("Make your move: Open hand ✋ = STAND, Closed fist ✊ = HIT");
+            updateSubmitButton();
+        }
+
+        function playerHit() {
+            if (gameState !== 'playing') return;
+            
+            playerCards.push(dealCard());
+            updateDisplay();
+            
+            const playerScore = calculateScore(playerCards);
+            if (playerScore > 21) {
+                gameState = 'game-over';
+                updateGameStatus("BUST! You went over 21. Dealer wins!");
+            } else if (playerScore === 21) {
+                dealerTurn();
+            } else {
+                updateGameStatus("Make your move: Open hand ✋ = STAND, Closed fist ✊ = HIT");
+            }
+        }
+
+        function playerStand() {
+            if (gameState !== 'playing') return;
+            dealerTurn();
+        }
+
+        function dealerTurn() {
+            gameState = 'dealer-turn';
+            updateDisplay();
+            updateGameStatus("Dealer's turn...");
+            
+            setTimeout(() => {
+                while (calculateScore(dealerCards) < 17) {
+                    dealerCards.push(dealCard());
+                    updateDisplay();
+                }
+                
+                endGame();
+            }, 1000);
+        }
+
+        function endGame() {
+            gameState = 'game-over';
+            const playerScore = calculateScore(playerCards);
+            const dealerScore = calculateScore(dealerCards);
+            
+            let message;
+            if (playerScore > 21) {
+                message = "BUST! You went over 21. Dealer wins!";
+            } else if (dealerScore > 21) {
+                message = "Dealer busts! You win!";
+            } else if (playerScore > dealerScore) {
+                message = "You win!";
+            } else if (dealerScore > playerScore) {
+                message = "Dealer wins!";
+            } else {
+                message = "It's a tie!";
+            }
+            
+            updateGameStatus(message + " Start a new game to play again.");
+        }
+
+        function updateGameStatus(message) {
+            document.getElementById('game-status').textContent = message;
+        }
+
+        function updateSubmitButton() {
+            const submitButton = document.getElementById('submit-move');
+            const detectedMoveSpan = document.getElementById('detected-move');
+            
+            if (gameState === 'playing' && currentDetectedMove) {
+                submitButton.disabled = false;
+                detectedMoveSpan.textContent = currentDetectedMove.toUpperCase();
+            } else {
+                submitButton.disabled = true;
+                detectedMoveSpan.textContent = 'None';
+            }
+        }
+
+        function submitMove() {
+            if (gameState !== 'playing' || !currentDetectedMove) return;
+            
+            if (currentDetectedMove === 'stand') {
+                playerStand();
+            } else if (currentDetectedMove === 'hit') {
+                playerHit();
+            }
+            
+            currentDetectedMove = '';
+            updateSubmitButton();
+        }
+
+        // Load the image model and setup the webcam
+        async function init() {
+            // Check if webcam is already initialized and playing
+            if (webcam && webcam.isPlaying()) {
+                console.log("Webcam is already running.");
+                return; // Exit the function to prevent multiple instances
+            }
+
+            const modelURL = URL + "model.json";
+            const metadataURL = URL + "metadata.json";
+
+            try {
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                const flip = true;
+                webcam = new tmImage.Webcam(200, 200, flip);
+                await webcam.setup();
+                await webcam.play();
+                
+                // Remove existing webcam canvas before adding the new one
+                const webcamContainer = document.getElementById("webcam-container");
+                while (webcamContainer.firstChild) {
+                    webcamContainer.removeChild(webcamContainer.firstChild);
+                }
+                
+                webcamContainer.appendChild(webcam.canvas);
+                
+                labelContainer = document.getElementById("label-container");
+                // Clear old prediction labels before adding new ones
+                while (labelContainer.firstChild) {
+                    labelContainer.removeChild(labelContainer.firstChild);
+                }
+                for (let i = 0; i < maxPredictions; i++) {
+                    labelContainer.appendChild(document.createElement("div"));
+                }
+
+                window.requestAnimationFrame(loop);
+
+            } catch (error) {
+                console.error("Error loading model:", error);
+                updateGameStatus("Error loading model. Please check the URL and try again.");
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            const prediction = await model.predict(webcam.canvas);
+            
+            let highestPrediction = { className: '', probability: 0 };
+            
+            for (let i = 0; i < maxPredictions; i++) {
+                const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i].innerHTML = classPrediction;
+                
+                if (prediction[i].probability > highestPrediction.probability) {
+                    highestPrediction = prediction[i];
+                }
+            }
+            
+            // Update gesture status
+            const gestureElement = document.getElementById('current-gesture');
+            if (highestPrediction.probability > 0.8) {
+                gestureElement.textContent = highestPrediction.className;
+                
+                // Detect gestures for the submit button
+                if (gameState === 'playing') {
+                    if (highestPrediction.className.toLowerCase().includes('stand') || 
+                        highestPrediction.className.toLowerCase().includes('open')) {
+                        currentDetectedMove = 'stand';
+                    } else if (highestPrediction.className.toLowerCase().includes('hit') || 
+                               highestPrediction.className.toLowerCase().includes('finger') ||
+                               highestPrediction.className.toLowerCase().includes('1')) {
+                        currentDetectedMove = 'hit';
+                    }
+                    updateSubmitButton();
+                }
+            } else {
+                gestureElement.textContent = 'Not recognized';
+                currentDetectedMove = '';
+                updateSubmitButton();
+            }
+        }
+
+        // Initialize the game
+        updateGameStatus("Press 'New Game' to start playing!");
+        
+        // Start screen functions
+        function startGame() {
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            newGame();
+
+            // Add this line to play the music
+            const gameMusic = document.getElementById('game-music');
+            if (gameMusic) {
+                gameMusic.play().catch(e => console.log("Audio playback failed:", e));
+            }
+        }
+        
+        function showStartScreen() {
+            document.getElementById('start-screen').classList.remove('hidden');
+            document.getElementById('game-screen').classList.add('hidden');
+            gameState = 'waiting';
+        }
+        
+        // Banner image upload function
+        function uploadBanner() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        document.getElementById('banner-image').src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+            input.click();
+        }
+        
+        // Character image upload function
+        function uploadCharacterImage(character) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        document.getElementById(character + '-image').src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+            input.click();
+        }
+        
+        // Add click event to banner for easy image upload
+        document.addEventListener('DOMContentLoaded', function() {
+            const bannerImage = document.getElementById('banner-image');
+            if (bannerImage) {
+                bannerImage.addEventListener('click', uploadBanner);
+                bannerImage.style.cursor = 'pointer';
+                bannerImage.title = 'Click to upload your own banner image';
+            }
+            
+            // Add tooltips for character images
+            const dealerImage = document.getElementById('dealer-image');
+            const playerImage = document.getElementById('player-image');
+            
+            if (dealerImage) {
+                dealerImage.title = 'Click to upload dealer character image';
+            }
+            if (playerImage) {
+                playerImage.title = 'Click to upload player character image';
+            }
+        });
+
+        function toggleMusic() {
+            const gameMusic = document.getElementById('game-music');
+            if (gameMusic) {
+                if (gameMusic.paused) {
+                    gameMusic.play();
+                } else {
+                    gameMusic.pause();
+                }
+            }
+        }
+    </script>
+
+    <audio id="game-music" loop>
+        <source src="Assets/Song.mp3" type="audio/mpeg">
+        Your browser does not support the audio element.
+    </audio>
+</body>
+</html>
